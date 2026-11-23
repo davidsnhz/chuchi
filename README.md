@@ -39,7 +39,7 @@ npm run dev    # http://localhost:4173
 npm test
 ```
 
-Está en Vercel: cada vez que subo un cambio a GitHub se actualiza sola.
+Está en Vercel, y cada vez que subo un cambio a GitHub se actualiza sola.
 
 ## Licencias de terceros
 
