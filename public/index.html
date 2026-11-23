@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sushi contador</title>
+  <meta name="description" content="Cuenta las piezas de sushi que te comes en el buffet, guarda tus días, bate tu récord y compite en directo con tus amigos. Gratis y sin registro.">
+  <link rel="canonical" href="https://sushi-contador.vercel.app/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Sushi contador">
+  <meta property="og:title" content="Sushi contador">
+  <meta property="og:description" content="¿Cuántas piezas te has comido? Cuéntalas, bate tu récord y compite con tus amigos.">
+  <meta property="og:url" content="https://sushi-contador.vercel.app/">
+  <meta property="og:image" content="https://sushi-contador.vercel.app/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:locale" content="es_ES">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#F4F6F3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E1512" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Sushi contador">
+  <meta name="format-detection" content="telephone=no, date=no">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="preload" href="/fonts/gabarito.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <div id="app">
+    <main id="view-contar" class="view" hidden>
+      <div class="fill" id="fill" aria-hidden="true"></div>
+      <div class="mark" id="mark" aria-hidden="true" hidden><span id="mark-label"></span></div>
+      <header class="top">
+        <h1 class="day" id="day-title">Hoy</h1>
+        <div class="top-actions">
+          <button class="pill" id="mesa-pill" data-act="go-mesa" hidden></button>
+          <button class="pill" id="finish" data-act="finish" hidden>Resumen</button>
+          <button class="icon-btn" id="gear" data-act="settings" aria-label="Ajustes"></button>
+        </div>
+      </header>
+      <button class="stage" id="stage" data-act="tap" aria-label="Sumar una pieza">
+        <span class="count" id="count">0</span>
+        <span class="hint" id="hint"></span>
+        <span class="plate" id="plate"></span>
+      </button>
+      <div class="types" id="types" role="group" aria-label="Tipo de pieza"></div>
+      <div class="pad">
+        <button class="pad-btn" id="undo" data-act="undo" aria-label="Deshacer"></button>
+        <button class="pad-btn" data-act="plus" data-n="2" aria-label="Sumar 2 piezas">+2</button>
+        <button class="pad-btn" data-act="plus" data-n="4" aria-label="Sumar 4 piezas">+4</button>
+        <button class="pad-btn" data-act="plus" data-n="8" aria-label="Sumar 8 piezas">+8</button>
+      </div>
+    </main>
+    <main id="view-historial" class="view scroll" hidden></main>
+    <main id="view-mesa" class="view scroll" hidden></main>
+    <nav class="tabs" aria-label="Secciones">
+      <a href="#contar" data-tab="contar">Contar</a>
+      <a href="#historial" data-tab="historial">Historial</a>
+      <a href="#mesa" data-tab="mesa">Mesa</a>
+    </nav>
+  </div>
+  <p class="sr" id="live" aria-live="polite"></p>
+  <noscript>Sushi contador necesita JavaScript para funcionar.</noscript>
+</body>
+</html>
