@@ -1139,9 +1139,9 @@ p {
 
 .qr {
   display: block;
-  width: min(100%, 280px);
+  width: min(100%, 310px);
   margin: 0 auto 16px;
-  padding: 16px;
+  padding: 38px;
   border-radius: 20px;
   background: #fff;
 }
