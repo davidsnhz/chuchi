@@ -2,7 +2,7 @@
  * Acordarse de subir la versión cuando cambie algún archivo.
  */
 
-const CACHE = "chuchi-v3";
+const CACHE = "chuchi-v4";
 
 const ASSETS = [
   "/",

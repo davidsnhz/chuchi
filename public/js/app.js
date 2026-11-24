@@ -1257,7 +1257,7 @@ function unpack(data) {
 async function handleBring(text) {
   const n = L.importData(L.emptyState(), text);
   if (!n) return toast(n === null ? "El enlace no trae ninguna copia válida." : "No había días que pasar.");
-  const ok = await confirmSheet("¿Traer tus días aquí?", `Vienen ${n === 1 ? "1 día" : `${n} días`} de la dirección anterior. Si un día está en los dos sitios, se queda el que tenga más piezas.`, "Traer");
+  const ok = await confirmSheet("¿Traer tus días aquí?", `${n === 1 ? "Viene 1 día" : `Vienen ${n} días`} de la dirección anterior. Si un día está en los dos sitios, se queda el que tenga más piezas.`, "Traer");
   if (ok) bringDays(text);
 }
 
