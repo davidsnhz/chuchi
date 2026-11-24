@@ -66,7 +66,7 @@ export function createMesa({ getRoom, onChange, onStatus, isActive }) {
     } finally {
       running = false;
       if (again) schedule(150);
-      else schedule(fails ? Math.min(20000, 2000 * 2 ** fails) : isActive() ? 2500 : 6000);
+      else schedule(fails ? Math.min(20000, 2000 * 2 ** fails) : isActive() ? 2000 : 4000);
     }
   }
 
@@ -84,10 +84,8 @@ export function createMesa({ getRoom, onChange, onStatus, isActive }) {
       else schedule(fails ? 1500 : 350);
     },
     flush,
-    leave(code, players) {
-      clearTimeout(timer);
-      post({ code, players }, { keepalive: true }).catch(() => {});
-    },
+    // Último aviso al salir de una mesa (falla si no hay cobertura)
+    send: (code, players) => post({ code, players }, { keepalive: true }),
     async find(code) {
       let players;
       try {
@@ -109,11 +107,11 @@ export function newRoom(day) {
 }
 
 // Crea o actualiza una persona de la mesa. Devuelve true si algo cambia.
-export function upsert(room, { id, owner, name, n, left = false }) {
+export function upsert(room, { id, owner, name, n, left = false, done = false }) {
   const old = room.players.find((p) => p.id === id);
-  if (old && old.name === name && old.n === n && old.left === left) return false;
+  if (old && old.name === name && old.n === n && old.left === left && old.done === done) return false;
   const v = Math.max(Date.now(), old ? old.v + 1 : 0);
-  room.players = mergePlayers(room.players, [{ id, owner, name, n, left, v }]);
+  room.players = mergePlayers(room.players, [{ id, owner, name, n, left, done, v }]);
   return true;
 }
 

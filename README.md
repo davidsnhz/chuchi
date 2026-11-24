@@ -1,10 +1,10 @@
-# Sushi contador
+# Chuchi
 
 Una app para contar las piezas de sushi que te comes en el buffet, guardar cada día y picarte con tus amigos.
 
 Es una PWA: se instala en el móvil y funciona sin conexión. Sin cuentas, sin anuncios y sin nada de pago.
 
-**Pruébala:** https://sushi-contador.vercel.app
+**Pruébala:** https://chuchi-app.vercel.app
 
 ## Qué hace
 
@@ -13,11 +13,13 @@ Es una PWA: se instala en el móvil y funciona sin conexión. Sin cuentas, sin a
 - Historial con la fecha y la cantidad de cada día. El récord sale más grande y en color.
 - Puedes separar por tipo (nigiri, maki, sashimi…) y apuntar restaurante, precio y una nota. Con el precio te dice a cuánto te ha salido la pieza.
 - Mesa en directo: creas una, los demás entran con el QR o el código, y veis el ranking al momento. También se puede añadir a alguien sin móvil.
-- «¿Quién se come la última?», para cuando queda una pieza.
+- Sortear la última pieza, para cuando queda una y nadie se decide.
 - Logros, estadísticas y una imagen para compartir.
 - Copia de seguridad para pasar tus días a otro móvil.
 
-El día cambia a las 5 de la mañana, así una cena que pasa de medianoche cuenta entera.
+Al terminar pulsas «He acabado» y se guarda. Si el mismo día comes sushi otra vez, empiezas otra comida desde cero y el historial suma las dos. Si se te olvida pulsarlo, el día se cierra solo a las 5 de la mañana, así una cena que pasa de medianoche cuenta entera.
+
+Antes se llamaba Sushi contador. La dirección vieja (sushi-contador.vercel.app) sigue funcionando para no perder los días guardados allí, y desde sus Ajustes se pueden pasar a la nueva.
 
 ## Por dentro
 

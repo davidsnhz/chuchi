@@ -5,7 +5,7 @@ import * as L from "../public/js/logic.js";
 const D = "2026-11-23";
 const E = "2026-11-24";
 const id = (n) => String(n).padStart(16, "0");
-const player = (n, extra = {}) => ({ id: id(n), owner: id(n), name: `P${n}`, n: 0, v: 1, left: false, ...extra });
+const player = (n, extra = {}) => ({ id: id(n), owner: id(n), name: `P${n}`, n: 0, v: 1, left: false, done: false, ...extra });
 
 test("el día cambia a las 5 de la mañana", () => {
   assert.equal(L.dayKey(new Date(2026, 10, 23, 22, 0)), D);
@@ -110,8 +110,11 @@ test("operaciones al azar: el total nunca se descuadra", () => {
 test("guardar y volver a cargar da lo mismo", () => {
   const s = L.emptyState();
   L.add(s, D, "maki", 8);
-  Object.assign(s.days[D], { place: "Sumo", price: 24.9, note: "rico", mesa: [{ name: "Ana", n: 4, me: false }] });
+  Object.assign(s.days[D], { place: "Sumo", price: 24.9, note: "rico", mesa: [{ name: "Ana", n: 4, me: false, done: true }] });
   s.room = { code: "ABCDE", day: D, players: [player(1)] };
+  L.startMeal(s, D);
+  L.add(s, D, "maki", 2);
+  L.finishMeal(s, D);
   assert.deepEqual(L.cleanState(JSON.parse(JSON.stringify(s))), s);
 });
 
@@ -150,6 +153,8 @@ test("logros", () => {
   assert.ok(!L.badges(s, D).find((b) => b.id === "mesa").done, "el mismo día todavía no se ha ganado");
   s.days[D].mesa[1].n = 40;
   assert.ok(!done().includes("mesa"), "empatar no es ganar");
+  s.days[D].mesa = [{ name: "Yo", n: 40, me: true, done: true }, { name: "Ana", n: 39, me: false, done: true }];
+  assert.ok(L.badges(s, D).find((b) => b.id === "mesa").done, "si todos han acabado, se gana en el momento");
 });
 
 test("copia de seguridad: no pierde nada", () => {
@@ -197,4 +202,135 @@ test("jugadores no válidos se descartan", () => {
 test("ranking con empates", () => {
   const r = L.ranking([player(1, { n: 5 }), player(2, { n: 9 }), player(3, { n: 5 }), player(4, { n: 2 }), player(5, { n: 99, left: true })]);
   assert.deepEqual(r.map((p) => [p.name, p.pos]), [["P2", 1], ["P1", 2], ["P3", 2], ["P4", 4]]);
+});
+
+test("he acabado: se guarda, se puede reabrir y empezar otra comida", () => {
+  const s = L.emptyState();
+  assert.equal(L.finishMeal(s, D), false, "sin piezas no se acaba");
+  L.add(s, D, "maki", 46);
+  assert.ok(L.finishMeal(s, D));
+  assert.ok(L.meal(s, D).done);
+  assert.equal(L.dayTotal(s, D), 46);
+  L.resumeMeal(s, D);
+  assert.equal(L.mealCount(s, D), 46);
+  assert.equal(L.undo(s, D), 46, "al reabrir se puede deshacer");
+  L.add(s, D, "maki", 46);
+  L.finishMeal(s, D);
+  L.startMeal(s, D);
+  assert.equal(L.mealCount(s, D), 0);
+  assert.equal(L.undo(s, D), 0, "no se deshace la comida anterior");
+  L.add(s, D, "maki", 2);
+  L.add(s, D, "nigiri", 1);
+  assert.equal(L.mealCount(s, D), 3);
+  assert.equal(L.mealCount(s, D, "maki"), 2);
+  assert.equal(L.dayTotal(s, D), 49);
+  for (let i = 0; i < 5; i++) L.undo(s, D);
+  assert.equal(L.mealCount(s, D), 0);
+  assert.equal(L.dayTotal(s, D), 46);
+});
+
+test("al día siguiente la comida empieza sola de cero", () => {
+  const s = L.emptyState();
+  L.add(s, D, "maki", 46);
+  L.finishMeal(s, D);
+  assert.equal(L.meal(s, E).done, false);
+  assert.equal(L.mealCount(s, E), 0);
+  assert.equal(L.dayTotal(s, D), 46);
+});
+
+test("corregir o borrar el día con comidas guardadas", () => {
+  const s = L.emptyState();
+  L.add(s, D, "pieza", 40);
+  L.startMeal(s, D);
+  L.add(s, D, "maki", 6);
+  L.setTotal(s, D, 45);
+  assert.equal(L.mealCount(s, D), 5, "se corrige primero la de ahora");
+  L.setTotal(s, D, 30);
+  assert.equal(L.mealCount(s, D), 0);
+  assert.equal(L.dayTotal(s, D), 30);
+  assert.equal(L.undo(s, D), 0);
+  L.add(s, D, "maki", 3);
+  L.finishMeal(s, D);
+  L.setTotal(s, D, 0);
+  assert.equal(L.meal(s, D).done, false, "sin piezas no puede estar acabada");
+  L.add(s, D, "maki", 3);
+  L.finishMeal(s, D);
+  L.deleteDay(s, D);
+  assert.equal(L.meal(s, D).done, false);
+  assert.equal(L.mealCount(s, D), 0);
+});
+
+test("comidas al azar: nunca negativo ni más que el día", () => {
+  const s = L.emptyState();
+  let seed = 3;
+  const rnd = (n) => (seed = (seed * 1103515245 + 12345) % 2147483648) % n;
+  for (let i = 0; i < 20000; i++) {
+    const op = rnd(12);
+    if (op < 6) L.add(s, D, L.TYPES[rnd(8)].id, [1, 2, 4, 8][rnd(4)]);
+    else if (op < 8) L.undo(s, D);
+    else if (op < 9) L.setTotal(s, D, rnd(300));
+    else if (op < 10) L.startMeal(s, D);
+    else if (op < 11) L.finishMeal(s, D);
+    else L.resumeMeal(s, D);
+    const m = L.mealCount(s, D);
+    assert.ok(m >= 0 && m <= L.dayTotal(s, D));
+    for (const t of L.TYPES) assert.ok(L.mealCount(s, D, t.id) >= 0);
+    if (i % 500 === 0) assert.deepEqual(L.cleanState(JSON.parse(JSON.stringify(s))), s);
+  }
+});
+
+test("los datos de la versión anterior siguen valiendo", () => {
+  const old = { v: 1, me: "0123456789abcdef", type: "maki", days: { [D]: { types: { maki: 46 }, place: "", price: null, note: "", mesa: [] } }, undo: [{ day: D, type: "maki", n: 46 }], room: null, settings: { name: "David" } };
+  const s = L.cleanState(old);
+  assert.equal(L.mealCount(s, D), 46);
+  assert.ok(!L.meal(s, D).done);
+  assert.equal(L.importData(L.emptyState(), JSON.stringify({ app: "sushi-contador", v: 1, days: old.days })), 1);
+  assert.equal(L.importData(L.emptyState(), L.exportData(s)), 1);
+});
+
+test("un móvil con la versión vieja no borra el «ha acabado»", () => {
+  const now = player(1, { n: 5, v: 10, done: true });
+  const stale = { ...now };
+  delete stale.done;
+  assert.ok(L.mergePlayers([now], [stale])[0].done);
+  assert.ok(L.mergePlayers([stale], [now])[0].done);
+});
+
+test("quien no tiene móvil acaba con quien lleva su cuenta", () => {
+  const boss = player(1, { done: true });
+  const guest = player(2, { owner: id(1) });
+  assert.ok(L.hasFinished(guest, [boss, guest]));
+  assert.ok(!L.hasFinished(guest, [{ ...boss, done: false }, guest]));
+  assert.ok(!L.hasFinished(player(3), [boss]));
+});
+
+test("ganar una mesa no se pierde al sentarse en otra el mismo día", () => {
+  const s = L.emptyState();
+  L.add(s, D, "maki", 20);
+  const me = (n) => player(1, { id: s.me, owner: s.me, n, done: true });
+  L.saveMesa(s, { code: "AAAAA", day: D, players: [me(20), player(2, { n: 5, done: true })] });
+  const won = () => L.badges(s, D).find((b) => b.id === "mesa").done;
+  assert.ok(won());
+  L.saveMesa(s, { code: "BBBBB", day: D, players: [me(0), player(3)] });
+  assert.equal(s.days[D].mesa[1].n, 5, "una mesa sin empezar no pisa la anterior");
+  L.saveMesa(s, { code: "BBBBB", day: D, players: [me(1), player(3, { n: 9 })] });
+  assert.equal(s.days[D].mesa[0].n, 9);
+  assert.ok(won());
+});
+
+test("traer una copia no borra restaurante, precio ni nota", () => {
+  const a = L.emptyState();
+  L.add(a, D, "maki", 30);
+  const b = L.emptyState();
+  L.add(b, D, "maki", 20);
+  Object.assign(b.days[D], { place: "Sumo", price: 20, note: "rico" });
+  L.importData(b, L.exportData(a));
+  assert.equal(L.dayTotal(b, D), 30);
+  assert.deepEqual([b.days[D].place, b.days[D].price, b.days[D].note], ["Sumo", 20, "rico"]);
+});
+
+test("las salidas de mesa pendientes se validan", () => {
+  const ok = { code: "AAAAA", day: D, players: [player(1)] };
+  assert.deepEqual(L.cleanState({ leaving: [ok, null, { code: "x" }, 4] }).leaving, [ok]);
+  assert.equal(L.cleanState({ leaving: Array(20).fill(ok) }).leaving.length, L.MAX_LEAVING);
 });

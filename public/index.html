@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Sushi contador</title>
+  <title>Chuchi · Contador de sushi</title>
   <meta name="description" content="Cuenta las piezas de sushi que te comes en el buffet, guarda tus días, bate tu récord y compite en directo con tus amigos. Gratis y sin registro.">
-  <link rel="canonical" href="https://sushi-contador.vercel.app/">
+  <link rel="canonical" href="https://chuchi-app.vercel.app/">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="Sushi contador">
-  <meta property="og:title" content="Sushi contador">
+  <meta property="og:site_name" content="Chuchi">
+  <meta property="og:title" content="Chuchi">
   <meta property="og:description" content="¿Cuántas piezas te has comido? Cuéntalas, bate tu récord y compite con tus amigos.">
-  <meta property="og:url" content="https://sushi-contador.vercel.app/">
-  <meta property="og:image" content="https://sushi-contador.vercel.app/og.png">
+  <meta property="og:url" content="https://chuchi-app.vercel.app/">
+  <meta property="og:image" content="https://chuchi-app.vercel.app/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:locale" content="es_ES">
@@ -21,7 +21,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Sushi contador">
+  <meta name="apple-mobile-web-app-title" content="Chuchi">
   <meta name="format-detection" content="telephone=no, date=no">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/icon-192.png" type="image/png">
@@ -37,10 +37,9 @@
       <div class="fill" id="fill" aria-hidden="true"></div>
       <div class="mark" id="mark" aria-hidden="true" hidden><span id="mark-label"></span></div>
       <header class="top">
-        <h1 class="day" id="day-title">Hoy</h1>
+        <h1 class="brand">Chuchi <span id="day-title">Hoy</span></h1>
         <div class="top-actions">
           <button class="pill" id="mesa-pill" data-act="go-mesa" hidden></button>
-          <button class="pill" id="finish" data-act="finish" hidden>Resumen</button>
           <button class="icon-btn" id="gear" data-act="settings" aria-label="Ajustes"></button>
         </div>
       </header>
@@ -50,12 +49,23 @@
         <span class="plate" id="plate"></span>
       </button>
       <div class="types" id="types" role="group" aria-label="Tipo de pieza"></div>
-      <div class="pad">
+      <div class="pad" id="pad">
         <button class="pad-btn" id="undo" data-act="undo" aria-label="Deshacer"></button>
         <button class="pad-btn" data-act="plus" data-n="2" aria-label="Sumar 2 piezas">+2</button>
         <button class="pad-btn" data-act="plus" data-n="4" aria-label="Sumar 4 piezas">+4</button>
         <button class="pad-btn" data-act="plus" data-n="8" aria-label="Sumar 8 piezas">+8</button>
       </div>
+      <button class="btn main finish" id="finish" data-act="finish" disabled>He acabado</button>
+      <section class="ended" id="ended" aria-label="Comida terminada" hidden>
+        <h2>Has acabado</h2>
+        <p class="count" id="ended-count">0</p>
+        <p class="hint" id="ended-hint"></p>
+        <div class="stack">
+          <button class="btn main" data-act="open-today">Ver resumen y compartir</button>
+          <button class="btn" data-act="new-meal">Empezar otra comida</button>
+          <button class="btn" data-act="resume-meal">Seguir contando</button>
+        </div>
+      </section>
     </main>
     <main id="view-historial" class="view scroll" hidden></main>
     <main id="view-mesa" class="view scroll" hidden></main>
@@ -66,6 +76,6 @@
     </nav>
   </div>
   <p class="sr" id="live" aria-live="polite"></p>
-  <noscript>Sushi contador necesita JavaScript para funcionar.</noscript>
+  <noscript>Chuchi necesita JavaScript para funcionar.</noscript>
 </body>
 </html>

@@ -1,4 +1,4 @@
-// Sushi contador. JS a pelo, sin framework ni build. Todo se guarda en localStorage.
+// Chuchi. JS a pelo, sin framework ni build. Todo se guarda en localStorage.
 
 import * as L from "./logic.js";
 import { art, ICON } from "./art.js";
@@ -6,8 +6,11 @@ import { createMesa, JoinError, newRoom, upsert, addGuest } from "./mesa.js";
 import { makeCard, shareCard, saveFile } from "./share.js";
 import qrcode from "./qrcode.js";
 
+// Se quedan con el nombre de antes a propósito: cambiarlos borraría los días guardados
 const KEY = "sushi-contador-v1";
 const HINT_KEY = "sushi-contador-instalar";
+const HOME = "https://chuchi-app.vercel.app";
+const OLD_HOST = "sushi-contador.vercel.app";
 const TABS = ["contar", "historial", "mesa"];
 
 const $ = (id) => document.getElementById(id);
@@ -54,6 +57,15 @@ const mesa = createMesa({
     if (tab === "mesa") renderMesa();
   },
   onChange() {
+    const { players } = state.room;
+    const me = players.find((p) => p.id === state.me);
+    // Ha llegado tarde un «salir» de antes de volver a entrar
+    if (me && me.left) pushMe();
+    // Han entrado dos a la vez en el último hueco y me ha tocado fuera
+    if (!me && players.filter((p) => !p.left).length >= L.MAX_PLAYERS) {
+      state.room = null;
+      joinError = FULL;
+    }
     snapshotMesa();
     save();
     renderMesaPill();
@@ -61,23 +73,20 @@ const mesa = createMesa({
   }
 });
 
-// Mi fila de la mesa es siempre el total de hoy
+// Mi fila de la mesa es siempre lo que llevo en esta comida
 function pushMe() {
   const room = state.room;
   if (!room || !state.settings.name) return;
-  const changed = upsert(room, { id: state.me, owner: state.me, name: state.settings.name, n: L.dayTotal(state, today) });
+  const n = L.mealCount(state, today);
+  const changed = upsert(room, { id: state.me, owner: state.me, name: state.settings.name, n, done: state.meal.done });
   if (changed) {
     snapshotMesa();
     mesa.touch();
   }
 }
 
-// Guarda con quién has comido, para verlo luego en el historial
 function snapshotMesa() {
-  const room = state.room;
-  if (!room) return;
-  const list = L.ranking(room.players).map((p) => ({ name: p.name, n: p.n, me: p.id === state.me }));
-  if (list.length > 1) L.ensureDay(state, room.day).mesa = list;
+  if (state.room) L.saveMesa(state, state.room);
 }
 
 function closeOldRoom() {
@@ -95,6 +104,8 @@ function checkDay() {
   const now = L.dayKey();
   if (now === today) return;
   today = now;
+  // Otra ventana puede haber seguido contando mientras esta estaba dormida
+  if (!saveFailed) state = load();
   const closed = closeOldRoom();
   save();
   renderAll();
@@ -165,7 +176,7 @@ let wakeLock = null;
 let wakeBusy = false;
 async function updateWake() {
   if (!("wakeLock" in navigator) || wakeBusy) return;
-  const want = state.settings.awake && !document.hidden && (tab === "contar" || tab === "mesa");
+  const want = state.settings.awake && !document.hidden && (tab === "contar" || tab === "mesa") && !L.meal(state, today).done;
   wakeBusy = true;
   try {
     if (want && !wakeLock) {
@@ -187,8 +198,9 @@ async function updateWake() {
 
 /* ---------- Contar ---------- */
 
-function addPieces(n, opts = {}) {
+function addPieces(n) {
   checkDay();
+  if (L.meal(state, today).done) return;
   const best = L.record(state, today);
   const before = L.dayTotal(state, today);
   const doneBefore = new Set(L.badges(state, today).filter((b) => b.done).map((b) => b.id));
@@ -205,8 +217,8 @@ function addPieces(n, opts = {}) {
   bump();
   const isNew = best > 0 && before <= best && now > best;
   vibrate(isNew ? [30, 50, 30, 50, 90] : 15);
-  pop(isNew ? 640 : opts.soft ? 380 : 420);
-  say(piezas(now));
+  pop(isNew ? 640 : 420);
+  say(piezas(L.mealCount(state, today)));
   if (isNew) {
     toast(`Nuevo récord: ${piezas(now)}`);
     rain();
@@ -218,6 +230,7 @@ function addPieces(n, opts = {}) {
 
 function undoLast() {
   checkDay();
+  if (L.meal(state, today).done) return;
   const out = L.undo(state, today);
   if (!out) return;
   pushMe();
@@ -225,7 +238,99 @@ function undoLast() {
   renderCounter();
   renderTypes();
   vibrate(10);
-  say(`Quitadas ${out}. Llevas ${piezas(L.dayTotal(state, today))}`);
+  say(`Quitadas ${out}. Llevas ${piezas(L.mealCount(state, today))}`);
+}
+
+/* ---------- He acabado ---------- */
+
+async function finishMeal() {
+  checkDay();
+  const n = L.mealCount(state, today);
+  if (!n || state.meal.done) return;
+  const day = L.formatDay(today, today).toLowerCase();
+  const ok = await confirmSheet("¿Has acabado?", `Se guardan ${piezas(n)} en tu historial del ${day}.`, "He acabado", "Seguir comiendo");
+  if (!ok) return;
+  checkDay();
+  if (!L.finishMeal(state, today)) return;
+  pushMe();
+  save();
+  toasts.length = 0;
+  vibrate([20, 60, 40]);
+  pop(520);
+  go("contar");
+  settle();
+  say(`Has acabado con ${piezas(n)}`);
+}
+
+// Al cambiar de pantalla, que un doble toque no caiga en el botón que aparece debajo
+let settleTimer = null;
+function settle() {
+  const view = $("view-contar");
+  view.classList.add("fresh");
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(() => view.classList.remove("fresh"), 350);
+}
+
+function resumeMeal() {
+  checkDay();
+  L.resumeMeal(state, today);
+  pushMe();
+  save();
+  route();
+  settle();
+}
+
+// Otra comida el mismo día: se cuenta desde cero y se suma al total del día
+function newMeal() {
+  checkDay();
+  quitRoom();
+  L.startMeal(state, today);
+  save();
+  route();
+  settle();
+}
+
+/* Salir de la mesa. Si ya he acabado no me borro: los demás siguen viendo con
+ * cuánto acabé. El aviso se reintenta hasta que haya cobertura. */
+function quitRoom() {
+  const room = state.room;
+  if (!room) return;
+  if (!L.meal(state, today).done) {
+    for (const p of room.players) if (p.owner === state.me && !p.left) upsert(room, { ...p, left: true });
+  }
+  state.room = null;
+  online = false;
+  mesa.stop();
+  state.leaving = [...state.leaving.filter((x) => x.code !== room.code), room].slice(-L.MAX_LEAVING);
+  save();
+  sendLeaving();
+}
+
+let leavingBusy = false;
+let leavingTimer = null;
+async function sendLeaving() {
+  clearTimeout(leavingTimer);
+  if (leavingBusy) return;
+  leavingBusy = true;
+  let failed = false;
+  for (const room of [...state.leaving]) {
+    if (room.day === today) {
+      try {
+        await mesa.send(room.code, room.players);
+      } catch {
+        failed = true;
+        continue;
+      }
+    }
+    const sent = JSON.stringify(room);
+    const left = state.leaving.filter((x) => JSON.stringify(x) !== sent);
+    if (left.length !== state.leaving.length) {
+      state.leaving = left;
+      save();
+    }
+  }
+  leavingBusy = false;
+  if (failed || state.leaving.length) leavingTimer = setTimeout(sendLeaving, 15000);
 }
 
 function bump() {
@@ -254,31 +359,38 @@ function rain() {
 }
 
 function renderCounter() {
-  const n = L.dayTotal(state, today);
+  const now = L.mealCount(state, today); // lo de esta comida
+  const n = L.dayTotal(state, today); // lo de todo el día, que es lo que cuenta para el récord
   const best = L.record(state, today);
+  const { done } = L.meal(state, today);
   $("day-title").textContent = L.formatDay(today, today);
-  $("count").textContent = n;
-  $("count").style.fontSize = "";
 
-  let hint;
-  if (!best) hint = n ? "Tu primer día. Esta será tu marca" : "Toca para sumar una pieza";
-  else if (!n) hint = "Toca para sumar una pieza";
-  else if (n < best) hint = `A ${n === best - 1 ? "una pieza" : piezas(best - n)} del récord`;
-  else if (n === best) hint = "Récord igualado";
-  else hint = "Nuevo récord";
-  $("hint").textContent = hint;
+  const hint = [];
+  if (!n) hint.push("Toca para sumar una pieza");
+  else if (!best) hint.push(done ? "Tu primera marca" : "Tu primer día. Esta será tu marca");
+  else if (n < best) hint.push(`A ${n === best - 1 ? "una pieza" : piezas(best - n)} del récord`);
+  else if (n === best) hint.push("Récord igualado");
+  else hint.push("Nuevo récord");
+  if (n > now) hint.push(`${n} hoy`);
+
+  for (const id of ["stage", "types", "pad", "finish"]) $(id).hidden = done;
+  $("ended").hidden = !done;
+  $(done ? "ended-count" : "count").textContent = now;
+  $(done ? "ended-hint" : "hint").textContent = hint.join(" · ");
 
   // La línea del récord está al 86 % de la pantalla
   let level = best ? (n > best ? 1 : (n / best) * 0.86) : Math.min(n / 50, 1) * 0.86;
   if (n && level < 0.02) level = 0.02;
   $("fill").style.setProperty("--level", level.toFixed(4));
-  $("mark").hidden = !best || n > best;
+  $("mark").hidden = done || !best || n > best;
   $("mark-label").textContent = `Récord ${best}`;
 
-  $("plate").innerHTML = $("plate").dataset.type === state.type ? $("plate").innerHTML : art(state.type);
-  $("plate").dataset.type = state.type;
-  $("undo").disabled = !n;
-  $("finish").hidden = !n;
+  if ($("plate").dataset.type !== state.type) {
+    $("plate").innerHTML = art(state.type);
+    $("plate").dataset.type = state.type;
+  }
+  $("undo").disabled = !now;
+  $("finish").disabled = !now;
   renderMesaPill();
 }
 
@@ -295,7 +407,6 @@ function renderMesaPill() {
 }
 
 function renderTypes() {
-  const day = state.days[today];
   const box = $("types");
   if (!box.children.length) {
     box.innerHTML = L.TYPES.map(
@@ -304,7 +415,7 @@ function renderTypes() {
     ).join("");
   }
   for (const chip of box.children) {
-    const n = day ? day.types[chip.dataset.id] || 0 : 0;
+    const n = L.mealCount(state, today, chip.dataset.id);
     chip.setAttribute("aria-pressed", String(chip.dataset.id === state.type));
     chip.lastElementChild.textContent = n || "";
     chip.lastElementChild.hidden = !n;
@@ -418,7 +529,7 @@ function renderMesa() {
 
 function lobbyHtml(name, code) {
   return `<div class="head"><h1>Mesa</h1></div>
-    <p class="lead">Compite en directo: cada uno cuenta en su móvil y veis el ranking al momento.</p>
+    <p class="lead">Cada uno cuenta en su propio móvil y el ranking se actualiza solo en todos. Uno crea la mesa y los demás se unen.</p>
     <form data-form="mesa" novalidate>
       <label class="field"><span>Tu nombre</span>
         <input class="input" id="mesa-name" maxlength="16" autocomplete="nickname" autocapitalize="words" enterkeyhint="done" value="${esc(name)}"></label>
@@ -438,7 +549,7 @@ function roomHtml() {
   const room = state.room;
   const list = L.ranking(room.players);
   const best = list.length ? list[0].n : 0;
-  const sum = list.reduce((a, p) => a + p.n, 0);
+  const me = list.find((p) => p.id === state.me);
   return `<div class="ticket"><div><h1 class="sr">Mesa</h1>
       <p class="code" aria-label="Código de la mesa: ${[...room.code].join(" ")}">${room.code}</p>
       <p class="status${online ? " on" : ""}">${online ? "En directo" : "Sin conexión por ahora"}</p></div>
@@ -447,8 +558,11 @@ function roomHtml() {
       .map((p) => {
         const first = p.pos === 1 && p.n > 0 && list.length > 1;
         const mine = p.owner === state.me && p.id !== state.me;
+        const tags = [];
+        if (p.id === state.me) tags.push("tú");
+        if (L.hasFinished(p, room.players)) tags.push("ha acabado");
         return `<li class="player${first ? " first" : ""}"><span class="pos">${p.pos}º</span>
-          <span class="name">${esc(p.name)}${p.id === state.me ? " <small>(tú)</small>" : ""}</span>
+          <span class="name">${esc(p.name)}${tags.length ? ` <small>(${tags.join(", ")})</small>` : ""}</span>
           ${
             mine
               ? `<span class="mini"><button data-act="guest-minus" data-id="${p.id}" aria-label="Quitar una a ${esc(p.name)}">${ICON.minus}</button>
@@ -458,12 +572,35 @@ function roomHtml() {
           <span class="n">${p.n}</span><i class="bar" style="width:${best ? ((p.n / best) * 100).toFixed(1) : 0}%"></i></li>`;
       })
       .join("")}</ol>
-    <p class="lead">${list.length > 1 ? `Entre todos lleváis ${piezas(sum)}.` : "Estás solo en la mesa. Pulsa Invitar para que se unan con el QR o el código."}</p>
+    <p class="lead">${esc(roomText(list))}</p>
     <div class="stack">
+      ${me && me.n && !me.done ? `<button class="btn main" data-act="finish">He acabado</button>` : ""}
       <button class="btn" data-act="add-guest">Añadir a alguien sin móvil</button>
-      ${list.length > 1 ? `<button class="btn" data-act="last-piece">¿Quién se come la última?</button>` : ""}
+      ${list.length > 1 ? `<button class="btn" data-act="last-piece">Sortear la última pieza</button>` : ""}
       <button class="btn danger" data-act="leave">Salir de la mesa</button>
     </div>`;
+}
+
+function roomText(list) {
+  if (list.length < 2) return "De momento solo estás tú. Pulsa Invitar para que los demás se unan desde su móvil.";
+  const sum = list.reduce((a, p) => a + p.n, 0);
+  if (!list.every((p) => L.hasFinished(p, state.room.players))) return `Entre todos lleváis ${piezas(sum)}.`;
+  const top = list.filter((p) => p.pos === 1).map((p) => p.name);
+  const who = top.length > 1 ? `Empate a ${list[0].n} entre ${top.slice(0, -1).join(", ")} y ${top[top.length - 1]}` : `Gana ${top[0]} con ${piezas(list[0].n)}`;
+  return `Mesa terminada. ${who}. Entre todos, ${piezas(sum)}.`;
+}
+
+// Al entrar en una mesa habiendo acabado ya: ¿con lo de antes o desde cero?
+// Devuelve "keep", "zero" o "" si se cancela
+async function askMeal() {
+  if (!L.meal(state, today).done) return "keep";
+  const n = L.mealCount(state, today);
+  const choice = await chooseSheet("Ya habías acabado", `Llevabas ${piezas(n)}. ¿Con cuánto entras en la mesa?`, [
+    ["keep", `Con ${n === 1 ? "la de antes" : `las ${n} de antes`}`],
+    ["zero", "Empezar de cero"]
+  ]);
+  checkDay();
+  return choice;
 }
 
 function readName() {
@@ -480,7 +617,18 @@ function readName() {
   return name;
 }
 
-function enterRoom(room) {
+function enterRoom(room, choice) {
+  if (choice === "zero") L.startMeal(state, today);
+  // Si vuelvo antes de que llegara el aviso de salida, no se pierde lo que iba en él
+  const pending = state.leaving.find((x) => x.code === room.code && x.day === room.day);
+  if (pending) {
+    const alive = new Set(room.players.filter((p) => !p.left).map((p) => p.id));
+    room.players = L.mergePlayers(room.players, pending.players);
+    for (const p of [...room.players]) {
+      if (p.owner === state.me && p.left && alive.has(p.id)) upsert(room, { ...p, left: false });
+    }
+  }
+  state.leaving = state.leaving.filter((x) => x.code !== room.code);
   state.room = room;
   joinError = "";
   online = false;
@@ -488,15 +636,26 @@ function enterRoom(room) {
   snapshotMesa();
   save();
   mesa.start();
-  renderMesa();
-  renderMesaPill();
+  renderAll();
   $("view-mesa").scrollTop = 0;
 }
 
-function createRoom() {
+async function createRoom() {
   checkDay();
-  if (state.room || !readName()) return;
-  enterRoom(newRoom(today));
+  if (state.room || joining || !readName()) return;
+  save();
+  const choice = await askMeal();
+  if (!choice || state.room) return;
+  enterRoom(newRoom(today), choice);
+}
+
+const FULL = `Esa mesa está llena (${L.MAX_PLAYERS} personas).`;
+
+async function findRoom(code) {
+  const players = await mesa.find(code);
+  const active = players.filter((p) => !p.left);
+  if (active.length >= L.MAX_PLAYERS && !active.some((p) => p.id === state.me)) throw new JoinError(FULL);
+  return players;
 }
 
 async function joinRoom() {
@@ -513,35 +672,52 @@ async function joinRoom() {
   joining = true;
   joinError = "";
   renderMesa();
+  let players = null;
   try {
-    const players = await mesa.find(code);
-    joining = false;
-    if (state.room) return;
-    checkDay();
-    const active = players.filter((p) => !p.left);
-    if (active.length >= L.MAX_PLAYERS && !active.some((p) => p.id === state.me)) {
-      throw new JoinError(`Esa mesa está llena (${L.MAX_PLAYERS} personas).`);
-    }
-    enterRoom({ code, day: today, players });
+    players = await findRoom(code);
   } catch (err) {
-    joining = false;
     if (!(err instanceof JoinError)) throw err;
     joinError = err.message;
+  } finally {
+    joining = false;
     renderMesa();
   }
+  if (!players || state.room) return;
+  checkDay();
+  const choice = await askMeal();
+  if (!choice || state.room) return;
+  enterRoom({ code, day: today, players }, choice);
+}
+
+// Cambiar de mesa: hasta que la nueva no está comprobada no se sale de la de ahora
+async function switchRoom(code) {
+  const old = state.room.code;
+  const still = () => state.room && state.room.code === old;
+  const ok = await confirmSheet("Ya estás en una mesa", `¿Sales de ${old} y entras en ${code}?`, "Cambiar de mesa");
+  if (!ok || !still() || joining) return;
+  joining = true;
+  let players = null;
+  try {
+    players = await findRoom(code);
+  } catch (err) {
+    if (!(err instanceof JoinError)) throw err;
+    toast(still() ? `${err.message} Sigues en ${old}.` : err.message);
+  } finally {
+    joining = false;
+    if (tab === "mesa") renderMesa();
+  }
+  if (!players) return;
+  checkDay();
+  const choice = still() && (await askMeal());
+  if (!choice || !still()) return;
+  quitRoom();
+  enterRoom({ code, day: today, players }, choice);
 }
 
 async function leaveRoom() {
   const ok = await confirmSheet("¿Salir de la mesa?", "Lo que has contado hoy se queda guardado en tu historial.", "Salir");
   if (!ok || !state.room) return;
-  const room = state.room;
-  for (const p of room.players) {
-    if (p.owner === state.me && !p.left) upsert(room, { ...p, left: true });
-  }
-  state.room = null;
-  online = false;
-  save();
-  mesa.leave(room.code, room.players);
+  quitRoom();
   renderMesa();
   renderMesaPill();
 }
@@ -611,18 +787,23 @@ function openSheet(title, body, { onClose, onAct } = {}) {
   });
   document.body.appendChild(dlg);
   dlg.showModal();
+  // Un doble toque no debe confirmar algo que todavía no se ha leído
+  dlg.classList.add("fresh");
+  setTimeout(() => dlg.classList.remove("fresh"), 350);
   return dlg;
 }
 
-function confirmSheet(title, text, yes) {
+// Devuelve el id de lo elegido, o "" si se cierra
+function chooseSheet(title, text, options, no = "Cancelar") {
   return new Promise((resolve) => {
-    let result = false;
+    let result = "";
+    const buttons = options.map(([id, label], i) => `<button class="btn${i ? "" : " main"}" data-act="${id}">${esc(label)}</button>`).join("");
     const dlg = openSheet(
       title,
-      `${text ? `<p class="info">${esc(text)}</p>` : ""}<div class="actions"><button class="btn main" data-act="yes">${esc(yes)}</button><button class="btn" data-act="close-sheet">Cancelar</button></div>`,
+      `${text ? `<p class="info">${esc(text)}</p>` : ""}<div class="actions">${buttons}<button class="btn" data-act="close-sheet">${esc(no)}</button></div>`,
       {
         onAct(act) {
-          result = act === "yes";
+          result = act;
           dlg.close();
         },
         onClose: () => resolve(result)
@@ -630,6 +811,8 @@ function confirmSheet(title, text, yes) {
     );
   });
 }
+
+const confirmSheet = async (title, text, yes, no) => (await chooseSheet(title, text, [["yes", yes]], no)) === "yes";
 
 /* Resumen de un día (hoy o cualquiera del historial) */
 function openDay(key) {
@@ -662,6 +845,24 @@ function openDay(key) {
   let cardTimer = null;
   let sharing = false;
   const current = () => L.ensureDay(state, key);
+
+  // Cada corrección parte de cómo estaba el día al abrir. Si no, al escribir «26»
+  // el «2» de en medio se llevaría por delante los tipos y la comida de ahora.
+  const snapshot = () => structuredClone({ types: current().types, undo: state.undo, meal: state.meal });
+  const signature = () =>
+    JSON.stringify([L.TYPES.map((t) => current().types[t.id] || 0), key === today ? [L.mealCount(state, key), L.meal(state, key).done] : 0]);
+  let start = snapshot();
+  let known = signature();
+  function setDay(n) {
+    // Otra ventana ha cambiado este día con el panel abierto: se parte de lo suyo
+    if (signature() !== known) start = snapshot();
+    const s = structuredClone(start);
+    current().types = s.types;
+    state.undo = s.undo;
+    if (s.meal && s.meal.day === key) state.meal = s.meal;
+    L.setTotal(state, key, n);
+    known = signature();
+  }
 
   function prepare() {
     card = null;
@@ -717,7 +918,7 @@ function openDay(key) {
     async onAct(act) {
       const input = dlg.querySelector("#day-n");
       if (act === "minus" || act === "plus-one") {
-        L.setTotal(state, key, L.total(current()) + (act === "minus" ? -1 : 1));
+        setDay(L.total(current()) + (act === "minus" ? -1 : 1));
         input.value = L.total(current());
         vibrate(10);
         changed();
@@ -752,11 +953,23 @@ function openDay(key) {
   });
 
   const input = dlg.querySelector("#day-n");
-  input.addEventListener("focus", () => input.select());
+  // Safari quita la selección al soltar el dedo, así que se repite en el primer toque
+  let justFocused = false;
+  let before = L.total(day);
+  input.addEventListener("focus", () => {
+    justFocused = true;
+    before = L.total(current());
+    input.select();
+  });
+  input.addEventListener("click", () => {
+    const shown = input.value;
+    if (justFocused) setTimeout(() => input.value === shown && input.setSelectionRange(0, shown.length));
+    justFocused = false;
+  });
   input.addEventListener("input", () => {
     input.value = input.value.replace(/\D/g, "").slice(0, 3);
-    if (input.value === "") return; // a medio escribir
-    L.setTotal(state, key, Number(input.value));
+    // Vacío es a medio escribir: mientras tanto se queda lo que había
+    setDay(input.value === "" ? before : Number(input.value));
     changed();
   });
   input.addEventListener("blur", () => (input.value = L.total(current())));
@@ -839,7 +1052,7 @@ function openInvite() {
     {
       async onAct(act) {
         if (act !== "share-link") return;
-        const data = { title: "Sushi contador", text: `Únete a mi mesa de sushi (código ${room.code})`, url: link };
+        const data = { title: "Chuchi", text: `Únete a mi mesa de sushi (código ${room.code})`, url: link };
         if (navigator.share) {
           try {
             await navigator.share(data);
@@ -891,8 +1104,8 @@ function openLastPiece() {
   if (names.length < 2) return;
   let timer = null;
   const dlg = openSheet(
-    "¿Quién se come la última?",
-    `<div class="wheel" aria-live="polite"></div><div class="actions"><button class="btn main" data-act="spin">Otra vez</button></div>`,
+    "Sortear la última pieza",
+    `<p class="info">Queda una y nadie se decide: que lo elija la suerte entre los de la mesa.</p><div class="wheel" aria-live="polite"></div><div class="actions"><button class="btn main" data-act="spin">Otra vez</button></div>`,
     { onAct: (act) => act === "spin" && spin(), onClose: () => clearTimeout(timer) }
   );
   const wheel = dlg.querySelector(".wheel");
@@ -941,6 +1154,7 @@ function openSettings() {
     </select></label>
     <div class="actions" style="margin-top:16px">
       ${standalone ? "" : '<button class="btn" data-act="install">Instalar en el móvil</button>'}
+      ${location.hostname === OLD_HOST && navigator.standalone !== true ? '<button class="btn" data-act="move">Pasar mis días a la dirección nueva</button>' : ""}
       <button class="btn" data-act="export">Guardar copia</button>
       <button class="btn" data-act="import">Recuperar copia</button>
       <button class="btn danger" data-act="wipe">Borrar todo el historial</button>
@@ -950,9 +1164,10 @@ function openSettings() {
     {
       async onAct(act) {
         if (act === "install") install();
+        else if (act === "move") location.href = `${HOME}/#traer=${pack(L.exportData(state))}`;
         else if (act === "export") {
           if (!L.dayList(state).length) return toast("Todavía no hay nada que guardar.");
-          saveFile(new Blob([L.exportData(state)], { type: "application/json" }), `sushi-contador-${today}.json`);
+          saveFile(new Blob([L.exportData(state)], { type: "application/json" }), `chuchi-${today}.json`);
           toast("Copia guardada en tus descargas.");
         } else if (act === "import") dlg.querySelector("#set-file").click();
         else if (act === "wipe") {
@@ -962,6 +1177,7 @@ function openSettings() {
           if (!ok) return;
           state.days = {};
           state.undo = [];
+          state.meal = null;
           pushMe();
           save();
           renderAll();
@@ -985,7 +1201,7 @@ function openSettings() {
   dlg.querySelector("#set-name").addEventListener("keydown", (e) => e.key === "Enter" && e.target.blur());
   dlg.querySelectorAll("[data-set]").forEach((el) =>
     el.addEventListener("change", () => {
-      s[el.dataset.set] = el.checked;
+      state.settings[el.dataset.set] = el.checked;
       save();
       if (el.dataset.set === "sound") pop();
       if (el.dataset.set === "vibrate") vibrate(20);
@@ -1007,13 +1223,42 @@ function openSettings() {
     } catch {
       /* se avisa abajo */
     }
-    const n = L.importData(state, text);
-    if (n === null) return toast("Ese archivo no es una copia de Sushi contador.");
-    pushMe();
-    save();
-    renderAll();
-    toast(n ? `Recuperado: ${n === 1 ? "1 día" : `${n} días`}.` : "Ya lo tenías todo.");
+    if (!bringDays(text)) toast("Ese archivo no es una copia de Chuchi.");
   });
+}
+
+function bringDays(text) {
+  const n = L.importData(state, text);
+  if (n === null) return false;
+  pushMe();
+  save();
+  renderAll();
+  toast(n ? `Recuperado: ${n === 1 ? "1 día" : `${n} días`}.` : "No había nada nuevo que añadir.");
+  return true;
+}
+
+/* Pasar los días de la dirección vieja a la nueva. Van detrás de la almohadilla
+ * del enlace, que el navegador nunca manda al servidor. */
+function pack(text) {
+  let bin = "";
+  for (const b of new TextEncoder().encode(text)) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function unpack(data) {
+  try {
+    const bin = atob(data.replace(/-/g, "+").replace(/_/g, "/"));
+    return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  } catch {
+    return "";
+  }
+}
+
+async function handleBring(text) {
+  const n = L.importData(L.emptyState(), text);
+  if (!n) return toast(n === null ? "El enlace no trae ninguna copia válida." : "No había días que pasar.");
+  const ok = await confirmSheet("¿Traer tus días aquí?", `Vienen ${n === 1 ? "1 día" : `${n} días`} de la dirección anterior. Si un día está en los dos sitios, se queda el que tenga más piezas.`, "Traer");
+  if (ok) bringDays(text);
 }
 
 /* ---------- Instalar ---------- */
@@ -1100,6 +1345,7 @@ function renderAll() {
   renderTypes();
   if (tab === "historial") renderHistory();
   if (tab === "mesa") renderMesa();
+  updateWake();
 }
 
 const ACTIONS = {
@@ -1113,10 +1359,10 @@ const ACTIONS = {
     renderTypes();
     showType();
   },
-  finish() {
-    checkDay();
-    if (L.dayTotal(state, today)) openDay(today);
-  },
+  finish: finishMeal,
+  "resume-meal": resumeMeal,
+  "new-meal": newMeal,
+  "open-today": () => openDay(today),
   settings: openSettings,
   "go-mesa": () => go("mesa"),
   "go-contar": () => go("contar"),
@@ -1141,6 +1387,13 @@ $("app").addEventListener("click", (e) => {
   if (b && !b.disabled && ACTIONS[b.dataset.act]) ACTIONS[b.dataset.act](b);
 });
 
+// Con un código puesto (por ejemplo, al llegar de un QR), «OK» en el nombre es unirse
+$("app").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.isComposing || e.target.id !== "mesa-name" || !$("mesa-code").value.trim()) return;
+  e.preventDefault();
+  joinRoom();
+});
+
 $("app").addEventListener("submit", (e) => {
   e.preventDefault();
   if (e.target.dataset.form === "mesa") createRoom();
@@ -1148,6 +1401,7 @@ $("app").addEventListener("submit", (e) => {
 });
 
 window.addEventListener("hashchange", () => {
+  if (takeBring()) return;
   document.querySelectorAll("dialog[open]").forEach((d) => d.close());
   route();
 });
@@ -1157,9 +1411,13 @@ document.addEventListener("visibilitychange", () => {
     mesa.flush();
     mesa.stop();
   } else {
+    if (!saveFailed) state = load();
     checkDay();
+    renderAll();
     mesa.start();
+    sendLeaving();
     if (swReg) swReg.update().catch(() => {});
+    reloadIfNew();
   }
   updateWake();
 });
@@ -1167,7 +1425,7 @@ document.addEventListener("visibilitychange", () => {
 // Vuelve del historial del navegador (bfcache)
 window.addEventListener("pageshow", (e) => {
   if (!e.persisted) return;
-  state = load();
+  if (!saveFailed) state = load();
   checkDay();
   renderAll();
   mesa.start();
@@ -1175,15 +1433,19 @@ window.addEventListener("pageshow", (e) => {
 
 // La misma app abierta en otra pestaña
 window.addEventListener("storage", (e) => {
-  if (e.key !== KEY && e.key !== null) return;
+  if ((e.key !== KEY && e.key !== null) || saveFailed) return;
   state = load();
+  today = L.dayKey();
   closeOldRoom();
   applyTheme();
   renderAll();
   if (state.room) mesa.touch();
 });
 
-window.addEventListener("online", () => mesa.start());
+window.addEventListener("online", () => {
+  mesa.start();
+  sendLeaving();
+});
 setInterval(checkDay, 30000);
 
 /* ---------- Arranque ---------- */
@@ -1198,21 +1460,28 @@ save();
 // Enlace de invitación: /?mesa=CODIGO
 const invited = L.normalizeCode(new URLSearchParams(location.search).get("mesa"));
 if (location.search) history.replaceState(null, "", invited ? "/#mesa" : `/${location.hash}`);
-route();
-if (L.isCode(invited)) handleInvite(invited);
-else maybeInstallHint();
+if (!takeBring()) {
+  route();
+  if (L.isCode(invited)) handleInvite(invited);
+  else maybeInstallHint();
+}
 mesa.start();
+sendLeaving();
 
-async function handleInvite(code) {
-  if (state.room && state.room.code === code) return;
+function takeBring() {
+  if (!location.hash.startsWith("#traer=")) return false;
+  const text = unpack(location.hash.slice(7));
+  history.replaceState(null, "", "/#historial");
+  document.querySelectorAll("dialog[open]").forEach((d) => d.close());
+  route();
+  handleBring(text);
+  return true;
+}
+
+function handleInvite(code) {
   if (state.room) {
-    const ok = await confirmSheet("Ya estás en una mesa", `¿Sales de ${state.room.code} y entras en ${code}?`, "Cambiar de mesa");
-    if (!ok || !state.room) return;
-    const old = state.room;
-    for (const p of old.players) if (p.owner === state.me && !p.left) upsert(old, { ...p, left: true });
-    state.room = null;
-    save();
-    mesa.leave(old.code, old.players);
+    if (state.room.code !== code) switchRoom(code);
+    return;
   }
   pendingCode = code;
   renderMesa();
@@ -1225,8 +1494,25 @@ async function handleInvite(code) {
 
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
+// Si hay versión nueva se carga sola, pero nunca a medio escribir ni con un panel abierto
+let newVersion = false;
+function reloadIfNew() {
+  if (!newVersion || saveFailed || joining || document.querySelector("dialog[open]")) return;
+  if (document.activeElement && document.activeElement.matches("input")) return;
+  const name = $("mesa-name");
+  const code = $("mesa-code");
+  if ((code && code.value) || (name && name.value.trim() !== state.settings.name)) return;
+  newVersion = false;
+  location.reload();
+}
+
 let swReg = null;
 if ("serviceWorker" in navigator) {
+  const hadOne = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    newVersion = hadOne;
+    reloadIfNew();
+  });
   navigator.serviceWorker
     .register("/sw.js")
     .then((r) => (swReg = r))

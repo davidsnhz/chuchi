@@ -14,6 +14,7 @@ const TYPE_IDS = TYPES.map((t) => t.id);
 
 export const MAX_DAY = 999;
 const MAX_UNDO = 500;
+export const MAX_LEAVING = 5;
 // El día cambia a las 5 de la mañana: una cena que pasa de medianoche cuenta entera
 const DAY_STARTS_AT = 5;
 
@@ -74,7 +75,9 @@ export function emptyState() {
     type: "pieza",
     days: {},
     undo: [],
+    meal: null,
     room: null,
+    leaving: [],
     settings: { name: "", sound: false, vibrate: true, awake: true, theme: "auto" }
   };
 }
@@ -125,11 +128,16 @@ function cleanDay(d) {
   const mesa = Array.isArray(d.mesa)
     ? d.mesa
         .filter(isObj)
-        .map((p) => ({ name: cleanText(p.name, 16), n: clampInt(p.n, 0, MAX_DAY), me: p.me === true }))
+        .map((p) => ({ name: cleanText(p.name, 16), n: clampInt(p.n, 0, MAX_DAY), me: p.me === true, done: p.done === true }))
         .filter((p) => p.name)
         .slice(0, 30)
     : [];
-  return { types, place: cleanText(d.place, 40), price: parsePrice(d.price), note: cleanText(d.note, 140), mesa };
+  return { types, place: cleanText(d.place, 40), price: parsePrice(d.price), note: cleanText(d.note, 140), mesa, code: isCode(d.code) ? d.code : "", won: d.won === true };
+}
+
+function cleanRoom(r) {
+  if (!isObj(r) || !isCode(r.code) || !isDayKey(r.day)) return null;
+  return { code: r.code, day: r.day, players: mergePlayers([], Array.isArray(r.players) ? r.players : []) };
 }
 
 // Acepta cualquier cosa (copia vieja, archivo manipulado…) y devuelve un estado válido
@@ -158,10 +166,19 @@ export function cleanState(raw) {
     }
     if (["auto", "light", "dark"].includes(raw.settings.theme)) s.settings.theme = raw.settings.theme;
   }
-  const r = raw.room;
-  if (isObj(r) && isCode(r.code) && isDayKey(r.day)) {
-    s.room = { code: r.code, day: r.day, players: mergePlayers([], Array.isArray(r.players) ? r.players : []) };
+  const m = raw.meal;
+  if (isObj(m) && isDayKey(m.day)) {
+    const base = {};
+    if (isObj(m.base)) {
+      for (const id of TYPE_IDS) {
+        const n = clampInt(m.base[id], 0, MAX_DAY);
+        if (n) base[id] = n;
+      }
+    }
+    s.meal = { day: m.day, base, done: m.done === true };
   }
+  s.room = cleanRoom(raw.room);
+  if (Array.isArray(raw.leaving)) s.leaving = raw.leaving.map(cleanRoom).filter(Boolean).slice(-MAX_LEAVING);
   return s;
 }
 
@@ -178,8 +195,48 @@ export function dayTotal(state, key) {
   return total(state.days[key]);
 }
 
+/* Comida de ahora. Un día puede tener varias (comer y cenar): `base` es lo que ya
+ * estaba guardado de las anteriores, y lo demás es lo que llevas en esta. */
+export function meal(state, key) {
+  if (!state.meal || state.meal.day !== key) state.meal = { day: key, base: {}, done: false };
+  const m = state.meal;
+  const types = state.days[key] ? state.days[key].types : {};
+  // Si se corrige el día a mano, lo guardado no puede ser más que el total
+  for (const id of Object.keys(m.base)) {
+    m.base[id] = Math.min(m.base[id], types[id] || 0);
+    if (!m.base[id]) delete m.base[id];
+  }
+  if (m.done && !TYPE_IDS.some((id) => (types[id] || 0) > (m.base[id] || 0))) m.done = false;
+  return m;
+}
+
+export function mealCount(state, key, type) {
+  const m = meal(state, key);
+  const types = state.days[key] ? state.days[key].types : {};
+  let n = 0;
+  for (const id of type ? [type] : TYPE_IDS) n += (types[id] || 0) - (m.base[id] || 0);
+  return n;
+}
+
+export function finishMeal(state, key) {
+  if (!mealCount(state, key)) return false;
+  state.meal.done = true;
+  return true;
+}
+
+export function resumeMeal(state, key) {
+  meal(state, key).done = false;
+}
+
+export function startMeal(state, key) {
+  const m = meal(state, key);
+  m.base = { ...(state.days[key] ? state.days[key].types : {}) };
+  m.done = false;
+  state.undo = state.undo.filter((u) => u.day !== key);
+}
+
 export function ensureDay(state, key) {
-  if (!state.days[key]) state.days[key] = { types: {}, place: "", price: null, note: "", mesa: [] };
+  if (!state.days[key]) state.days[key] = { types: {}, place: "", price: null, note: "", mesa: [], code: "", won: false };
   return state.days[key];
 }
 
@@ -200,38 +257,46 @@ function take(day, type, n) {
   return out;
 }
 
-// Devuelve cuántas piezas ha quitado
+// Devuelve cuántas piezas ha quitado. Solo toca la comida de ahora.
 export function undo(state, key) {
   const day = state.days[key];
-  if (!day || !total(day)) return 0;
+  if (!day || !mealCount(state, key)) return 0;
   while (state.undo.length) {
     const u = state.undo.pop();
     if (u.day !== key) continue;
-    const out = take(day, u.type, u.n);
+    const out = take(day, u.type, Math.min(u.n, mealCount(state, key, u.type)));
     if (out) return out;
   }
   // Sin jugadas guardadas (por ejemplo, tras corregir a mano): quita de una en una
-  return take(day, day.types[state.type] ? state.type : biggestType(day), 1);
+  const type = mealCount(state, key, state.type) ? state.type : biggest((id) => mealCount(state, key, id));
+  return take(day, type, 1);
 }
 
-function biggestType(day) {
-  return TYPE_IDS.reduce((a, b) => ((day.types[b] || 0) > (day.types[a] || 0) ? b : a));
+function biggest(count) {
+  return TYPE_IDS.reduce((a, b) => (count(b) > count(a) ? b : a));
 }
 
-// Corregir el total a mano. Lo que falta o sobra sale de "Cualquiera" primero.
+// Corregir el total a mano. Lo que sobra sale primero de la comida de ahora y de "Cualquiera".
 export function setTotal(state, key, n) {
   n = clampInt(n, 0, MAX_DAY);
   const day = ensureDay(state, key);
   let diff = n - total(day);
   if (!diff) return;
   if (diff > 0) day.types.pieza = (day.types.pieza || 0) + diff;
-  while (diff < 0) diff += take(day, day.types.pieza ? "pieza" : biggestType(day), -diff);
+  const here = (id) => (state.meal && state.meal.day === key ? mealCount(state, key, id) : 0);
+  while (diff < 0) {
+    const inMeal = TYPE_IDS.some((id) => here(id));
+    const count = inMeal ? here : (id) => day.types[id] || 0;
+    const type = count("pieza") ? "pieza" : biggest(count);
+    diff += take(day, type, Math.min(-diff, count(type)));
+  }
   state.undo = state.undo.filter((u) => u.day !== key);
 }
 
 export function deleteDay(state, key) {
   delete state.days[key];
   state.undo = state.undo.filter((u) => u.day !== key);
+  if (state.meal && state.meal.day === key) state.meal = null;
 }
 
 /* ---------- Historial y récord ---------- */
@@ -296,7 +361,32 @@ export const BADGES = [
   { id: "t1000", name: "Mil piezas", text: "Sumando todos los días", f: allTime(1000) }
 ];
 
-// `today` hace falta porque una mesa solo se gana cuando el día ha terminado
+export const mesaClosed = (day) => day.mesa.every((p) => p.done);
+
+export function wonMesa(day) {
+  const me = day.mesa.find((p) => p.me);
+  return !!me && day.mesa.length > 1 && day.mesa.every((p) => p.me || p.n < me.n);
+}
+
+// Guarda con quién has comido. Si ese día hubo otra mesa antes y la ganaste, no se pierde.
+export function saveMesa(state, room) {
+  const list = ranking(room.players).map((p) => ({
+    name: p.name,
+    n: p.n,
+    me: p.id === state.me,
+    done: hasFinished(p, room.players)
+  }));
+  if (list.length < 2) return;
+  const day = ensureDay(state, room.day);
+  if (day.code && day.code !== room.code) {
+    if (list.every((p) => !p.n)) return; // la nueva aún no ha empezado
+    if (mesaClosed(day) && wonMesa(day)) day.won = true;
+  }
+  day.mesa = list;
+  day.code = room.code;
+}
+
+// Una mesa solo se gana cuando ha acabado todo el mundo o ha pasado el día
 export function badges(state, today) {
   const list = dayList(state);
   const s = { best: 0, sum: 0, variety: 0, days: list.length, wins: 0 };
@@ -304,10 +394,7 @@ export function badges(state, today) {
     s.best = Math.max(s.best, n);
     s.sum += n;
     s.variety = Math.max(s.variety, TYPE_IDS.filter((id) => id !== "pieza" && day.types[id]).length);
-    if (key < today && day.mesa.length > 1) {
-      const others = day.mesa.filter((p) => !p.me);
-      if (others.length && others.length < day.mesa.length && others.every((p) => p.n < n)) s.wins++;
-    }
+    if (day.won || (wonMesa(day) && (key < today || mesaClosed(day)))) s.wins++;
   }
   return BADGES.map((b) => {
     const [have, need] = b.f(s);
@@ -318,7 +405,7 @@ export function badges(state, today) {
 /* ---------- Copia de seguridad ---------- */
 
 export function exportData(state) {
-  return JSON.stringify({ app: "sushi-contador", v: 1, days: state.days }, null, 2);
+  return JSON.stringify({ app: "chuchi", v: 1, days: state.days }, null, 2);
 }
 
 // Junta la copia con lo que hay. Si un día está en los dos sitios se queda el mayor.
@@ -329,12 +416,22 @@ export function importData(state, text) {
   } catch {
     return null;
   }
-  if (!isObj(raw) || raw.app !== "sushi-contador" || !isObj(raw.days)) return null;
+  // "sushi-contador" es como se llamaba antes: sus copias siguen valiendo
+  if (!isObj(raw) || !["chuchi", "sushi-contador"].includes(raw.app) || !isObj(raw.days)) return null;
   const incoming = cleanState({ days: raw.days }).days;
   let changed = 0;
   for (const key of Object.keys(incoming)) {
     if (total(incoming[key]) > dayTotal(state, key)) {
-      state.days[key] = incoming[key];
+      const old = state.days[key];
+      const day = incoming[key];
+      if (old) {
+        day.place = day.place || old.place;
+        day.price = day.price || old.price;
+        day.note = day.note || old.note;
+        day.won = day.won || old.won;
+        if (!day.mesa.length) Object.assign(day, { mesa: old.mesa, code: old.code });
+      }
+      state.days[key] = day;
       state.undo = state.undo.filter((u) => u.day !== key);
       changed++;
     }
@@ -373,7 +470,7 @@ export function cleanPlayer(p) {
   if (!Number.isSafeInteger(p.v) || p.v < 0 || p.v > 9e14) return null;
   const name = cleanText(p.name, 16);
   if (!name) return null;
-  return { id: p.id, owner: p.owner, name, n: clampInt(p.n, 0, MAX_DAY), v: p.v, left: p.left === true };
+  return { id: p.id, owner: p.owner, name, n: clampInt(p.n, 0, MAX_DAY), v: p.v, left: p.left === true, done: p.done === true };
 }
 
 // Para cada persona gana la versión más nueva. Da igual el orden en que lleguen,
@@ -400,4 +497,11 @@ export function ranking(players) {
     if (i === 0 || p.n < list[i - 1].n) pos = i + 1;
     return { ...p, pos };
   });
+}
+
+// Quien no tiene móvil acaba cuando acaba la persona que lleva su cuenta
+export function hasFinished(p, players) {
+  if (p.done || p.owner === p.id) return p.done;
+  const owner = players.find((x) => x.id === p.owner);
+  return !!owner && owner.done;
 }

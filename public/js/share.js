@@ -47,7 +47,7 @@ export async function makeCard({ key, today, day, isRecord }) {
 
   ctx.textAlign = "left";
   ctx.font = `700 46px ${FONT}`;
-  ctx.fillText("Sushi contador", 80, 130);
+  ctx.fillText("Chuchi", 80, 130);
   ctx.textAlign = "right";
   ctx.font = `500 42px ${FONT}`;
   ctx.fillText(formatDay(key, today, { year: true }), W - 80, 130);

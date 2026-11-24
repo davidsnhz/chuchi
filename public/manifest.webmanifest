@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Sushi contador",
-  "short_name": "Sushi",
+  "name": "Chuchi",
+  "short_name": "Chuchi",
   "description": "Cuenta las piezas de sushi que te comes y bate tu récord.",
   "start_url": "/",
   "scope": "/",
